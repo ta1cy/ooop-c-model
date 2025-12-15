@@ -25,6 +25,7 @@ package checkpoint_types;
 
   // ROB pointers snapshot (enough to truncate younger ops on recovery)
   typedef struct packed {
+    logic [ROB_W-1:0] head;
     logic [ROB_W-1:0] tail;
     logic [ROB_W:0]   count;
   } rob_ptrs_snapshot_t;

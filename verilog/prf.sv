@@ -114,10 +114,11 @@ module prf (
       end
 
     end else if (recover_i) begin
-      valid_bits <= ckpt_valid[recover_tag_i];
-      for (i = 0; i < N_PHYS_REGS; i = i + 1) begin
-        regs[i] <= ckpt_regs[recover_tag_i][i];
-      end
+      // NOTE: Do NOT restore PRF data or valid bits!
+      // Instructions older than the mispredicting branch (including the branch itself)
+      // have already executed and written valid results to the PRF.
+      // Only the RAT and Free List need restoration to squash younger instructions.
+      // The PRF state should remain as-is with all valid writes intact.
       regs[0]       <= '0;
       valid_bits[0] <= 1'b1;
 

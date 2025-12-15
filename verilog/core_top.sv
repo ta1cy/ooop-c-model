@@ -2,9 +2,8 @@
 // Module Name: core_top
 // Description: Phase 4 integration (with skid buffers between stages).
 // Additional Comments:
-//   - FIX: robust rob tag allocation (live+reserved) + correct post-rename checkpoints
-//   - FIX: ROB checkpoint pending captured at real allocation time
-//   - FIX: LSU post-flush 2-cycle block to prevent stale responses corrupting state
+//   - Exposes rob_commit (internal signal) for testbench to count *all* commits
+//   - Adds optional debug prints guarded by `CORE_DEBUG
 //////////////////////////////////////////////////////////////////////////////////
 
 `timescale 1ns/1ps
@@ -158,7 +157,7 @@ module core_top (
   logic                   checkpoint_take;
   logic [ROB_W-1:0]        checkpoint_tag;
 
-  // NEW: ROB live tag bitmap -> RS squash AND tag allocator
+  // ROB live tag bitmap
   logic [ROB_DEPTH-1:0] rob_live_tag;
 
   // -------------------------
@@ -172,16 +171,11 @@ module core_top (
   rename_pkt_t rob_alloc_pkt;
   logic rob_ready;
 
-  // ------------------------------------------------------------------
-  // FIX: declare tag_alloc_req BEFORE it is used (avoids implicit-net /
-  //      redeclare hazard).
-  // ------------------------------------------------------------------
   wire rename_fire;
   wire tag_alloc_req;
 
   assign rename_fire   = d_valid && d_ready; // rename handshake
   assign tag_alloc_req = rename_fire;
-  // ------------------------------------------------------------------
 
   rob_tag_alloc #(
     .ROB_DEPTH(ROB_DEPTH)
@@ -240,18 +234,6 @@ module core_top (
     .tag_ok_i         (tag_ok),
     .rob_tag_i        (rob_tag)
   );
-
-  // NOTE: rename_u still needs rob_tag; easiest is to keep the existing internal
-  // signal name rob_tag in rename.sv and connect it through the rename_pkt itself.
-  // Since your rename.sv uses rob_tag internally, you should add a port if needed.
-  //
-  // If your current rename.sv expects rob_tag from an internal allocator,
-  // then you must add a new input port in rename.sv:
-  //   input logic [ROB_W-1:0] rob_tag_i
-  // and use it for pkt_out.rob_tag and checkpoint_tag_o.
-  //
-  // (Because you asked for full copy-pastables, I can provide the final "rename.sv"
-  // variant with rob_tag_i if you want-just say "use rob_tag_i wiring".)
 
   // -------------------------
   // Skid: Rename -> Dispatch
@@ -333,6 +315,8 @@ module core_top (
     .recover_i       (recover_i),
     .live_tag_i      (rob_live_tag),
 
+    .prf_valid_i     (prf_valid),        // << ADDED
+
     .insert_valid_i  (rs_alu_ins_v),
     .insert_entry_i  (rs_alu_ins_e),
     .ready_o         (rs_alu_ready),
@@ -354,6 +338,8 @@ module core_top (
     .recover_i       (recover_i),
     .live_tag_i      (rob_live_tag),
 
+    .prf_valid_i     (prf_valid),        // << ADDED
+
     .insert_valid_i  (rs_bru_ins_v),
     .insert_entry_i  (rs_bru_ins_e),
     .ready_o         (rs_bru_ready),
@@ -374,6 +360,8 @@ module core_top (
 
     .recover_i       (recover_i),
     .live_tag_i      (rob_live_tag),
+
+    .prf_valid_i     (prf_valid),        // << ADDED
 
     .insert_valid_i  (rs_lsu_ins_v),
     .insert_entry_i  (rs_lsu_ins_e),
@@ -522,6 +510,7 @@ module core_top (
   // -------------------------
   // ROB
   // -------------------------
+  logic rob_commit; // <-- TB should count this, not free_req
   rob #(.DEPTH(ROB_DEPTH)) rob_u (
     .clk              (clk),
     .rst_n            (rst_n),
@@ -543,6 +532,8 @@ module core_top (
     .free_req_o       (free_req),
     .free_preg_o      (free_preg),
 
+    .commit_o         (rob_commit),
+
     .live_tag_o       (rob_live_tag)
   );
 
@@ -563,5 +554,20 @@ module core_top (
     .recover_o     (recover_i),
     .recover_tag_o (recover_tag_i)
   );
+
+`ifdef CORE_DEBUG
+  // very lightweight tracing (prints on interesting events)
+  always_ff @(posedge clk) begin
+    if (rst_n) begin
+      if (rob_commit) begin
+        $display("[core] commit pc=0x%08x instr=0x%08x free_req=%0b free_preg=%0d flush=%0b recover=%0b",
+                 f_pc, f_instr, free_req, free_preg, flush_i, recover_i);
+      end
+      if (flush_i) begin
+        $display("[core] flush -> pc=0x%08x (recover=%0b tag=%0d)", flush_pc_i, recover_i, recover_tag_i);
+      end
+    end
+  end
+`endif
 
 endmodule

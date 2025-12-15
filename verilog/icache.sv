@@ -27,7 +27,7 @@
 
 module icache #(
   parameter int    DEPTH_WORDS  = 512,
-  parameter string PROGRAM_TXT  = "25instMem-test.txt",
+  parameter string PROGRAM_TXT  = "25instMem-r.txt",
   parameter bit    REQUIRE_FILE = 1'b0   // set to 1 to hard-fail if file missing
 )(
   input  logic        clk,

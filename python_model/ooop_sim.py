@@ -183,6 +183,7 @@ class Core:
         self.ckpt_rat = {}
         self.ckpt_free = {}
         self.ckpt_prf_valid = {}
+        self.ckpt_rob_head = {}
         self.ckpt_rob_tail = {}
     
     def load_program(self, fname):
@@ -259,13 +260,17 @@ class Core:
         if self.recover:
             self.rat = self.ckpt_rat.get(self.recover_tag, list(range(N_ARCH_REGS)))
             self.free_map = self.ckpt_free.get(self.recover_tag, [i>=N_ARCH_REGS for i in range(N_PHYS_REGS)])
-            self.prf_valid = self.ckpt_prf_valid.get(self.recover_tag, [True]*N_PHYS_REGS)
+            # NOTE: Do NOT restore prf_valid! Older instructions have already written valid data.
+            # Only younger (squashed) instructions' PRF entries need invalidation, which happens
+            # via free_map restoration (those pregs become free/invalid).
             # Truncate ROB
+            head = self.ckpt_rob_head.get(self.recover_tag, 0)
             tail = self.ckpt_rob_tail.get(self.recover_tag, 0)
             idx = tail
             while idx != self.rob_tail:
                 self.rob[idx] = None
                 idx = (idx + 1) % ROB_DEPTH
+            self.rob_head = head
             self.rob_tail = tail
             # Clear RS
             for rs in [self.rs_alu, self.rs_bru, self.rs_lsu]:
@@ -300,6 +305,7 @@ class Core:
                         self.ckpt_rat[tag] = self.rat[:]
                         self.ckpt_free[tag] = self.free_map[:]
                         self.ckpt_prf_valid[tag] = self.prf_valid[:]
+                        self.ckpt_rob_head[tag] = self.rob_head
                         self.ckpt_rob_tail[tag] = self.rob_tail
                     
                     # Dispatch to RS

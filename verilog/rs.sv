@@ -10,6 +10,8 @@
 //   - FIX (phase 4): on recover_i, squash ONLY entries whose rob_tag is NOT live
 //     according to ROB's live_tag bitmap. This avoids wiping older ops and
 //     prevents ROB deadlock after branch recovery.
+//   - FIX (wakeup-miss): on enqueue, recompute src readiness using *current*
+//     PRF valid + current-cycle WB match to avoid "missed wakeup in fifo".
 //////////////////////////////////////////////////////////////////////////////////
 
 `timescale 1ns/1ps
@@ -26,6 +28,9 @@ module rs #(
   // NEW: recovery squash (phase 4)
   input  logic                  recover_i,
   input  logic [ooop_types::ROB_DEPTH-1:0] live_tag_i,
+
+  // NEW: current PRF valid bits (fix missed wakeup while sitting in fifo)
+  input  logic [ooop_types::N_PHYS_REGS-1:0] prf_valid_i,
 
   // enqueue
   input  logic                   insert_valid_i,
@@ -68,12 +73,28 @@ module rs #(
     match_wb = wb.valid && wb.rd_used && (wb.prd == preg) && (preg != '0);
   endfunction
 
+  function automatic logic preg_is_valid(input logic [PREG_W-1:0] preg);
+    if (preg == '0) begin
+      preg_is_valid = 1'b1; // x0 always ready
+    end else begin
+      preg_is_valid = prf_valid_i[preg];
+    end
+  endfunction
+
+  function automatic logic ready_on_wb(input logic [PREG_W-1:0] preg);
+    ready_on_wb =
+      match_wb(wb_alu_i, preg) ||
+      match_wb(wb_lsu_i, preg) ||
+      match_wb(wb_bru_i, preg);
+  endfunction
+
   // build masks + choose lowest index
   always @* begin
     for (int idx = 0; idx < DEPTH; idx = idx + 1) begin
       free_mask[idx]  = !occupied[idx];
       ready_mask[idx] = occupied[idx] && entries[idx].valid &&
-                        entries[idx].prs1_ready && entries[idx].prs2_ready;
+                        (!entries[idx].rs1_used || entries[idx].prs1_ready) &&
+                        (!entries[idx].rs2_used || entries[idx].prs2_ready);
     end
 
     free_found = |free_mask;
@@ -129,7 +150,6 @@ module rs #(
       end
 
     end else if (flush_i) begin
-      // frontend-style flush (not the phase-4 truncate); keep behavior for safety
       hold_valid_q <= 1'b0;
       hold_idx_q   <= '0;
       for (int idx = 0; idx < DEPTH; idx = idx + 1) begin
@@ -138,7 +158,7 @@ module rs #(
       end
 
     end else if (recover_i) begin
-      // FIX: squash only entries that are not in the ROB anymore
+      // squash only entries that are not in the ROB anymore
       // and drop any held selection if it got squashed.
       for (int idx = 0; idx < DEPTH; idx = idx + 1) begin
         if (occupied[idx]) begin
@@ -150,8 +170,6 @@ module rs #(
       end
 
       if (hold_valid_q) begin
-        // note: occupied[] updates above are nonblocking, so this check is conservative.
-        // clearing hold here is safe; it will be re-picked next cycle if still valid.
         if (!occupied[hold_idx_q] || !live_tag_i[entries[hold_idx_q].rob_tag]) begin
           hold_valid_q <= 1'b0;
           hold_idx_q   <= '0;
@@ -159,44 +177,50 @@ module rs #(
       end
 
     end else begin
-      // wakeup
+      // wakeup existing entries
       for (int idx = 0; idx < DEPTH; idx = idx + 1) begin
         if (occupied[idx]) begin
           if (!entries[idx].prs1_ready) begin
-            if (match_wb(wb_alu_i, entries[idx].prs1) ||
-                match_wb(wb_lsu_i, entries[idx].prs1) ||
-                match_wb(wb_bru_i, entries[idx].prs1)) begin
+            if (ready_on_wb(entries[idx].prs1)) begin
               entries[idx].prs1_ready <= 1'b1;
             end
           end
           if (!entries[idx].prs2_ready) begin
-            if (match_wb(wb_alu_i, entries[idx].prs2) ||
-                match_wb(wb_lsu_i, entries[idx].prs2) ||
-                match_wb(wb_bru_i, entries[idx].prs2)) begin
+            if (ready_on_wb(entries[idx].prs2)) begin
               entries[idx].prs2_ready <= 1'b1;
             end
           end
         end
       end
 
-      // If we are NOT holding and have a pick, latch it ONLY when not granted yet.
-      // (If granted immediately, we can pop directly without entering hold.)
+      // hold behavior
       if (!hold_valid_q && pick_found && !issue_ready_i) begin
         hold_valid_q <= 1'b1;
         hold_idx_q   <= pick_idx;
       end
 
-      // dequeue ONLY on grant, and dequeue the selected index
+      // dequeue ONLY on grant
       if (issue_fire) begin
         occupied[sel_idx] <= 1'b0;
         entries[sel_idx]  <= '0;
         hold_valid_q      <= 1'b0;
       end
 
-      // enqueue
+      // enqueue (FIX: recompute readiness using *current* PRF valid + same-cycle WB)
       if (insert_valid_i && ready_o) begin
+        rs_entry_t ins;
+        ins = insert_entry_i;
+
+        ins.prs1_ready = insert_entry_i.prs1_ready ||
+                         preg_is_valid(insert_entry_i.prs1) ||
+                         ready_on_wb(insert_entry_i.prs1);
+
+        ins.prs2_ready = insert_entry_i.prs2_ready ||
+                         preg_is_valid(insert_entry_i.prs2) ||
+                         ready_on_wb(insert_entry_i.prs2);
+
         occupied[free_idx] <= 1'b1;
-        entries[free_idx]  <= insert_entry_i;
+        entries[free_idx]  <= ins;
       end
     end
   end

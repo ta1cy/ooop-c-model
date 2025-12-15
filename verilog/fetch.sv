@@ -1,10 +1,13 @@
 //////////////////////////////////////////////////////////////////////////////////
 // Module Name: fetch
-// Description: fetch stage. fetches one instruction at a time from icache.
-// Additional Comments:
-//   - uses ready/valid handshake
-//   - flush_i redirects PC and drops in-flight output
+// Description: Simple in-order fetch with icache handshake.
+//   - launches one request at a time
+//   - holds a pending request until icache_rvalid_i
+//   - holds output valid until downstream ready_in consumes it
+//   - flush squashes pending/output and redirects pc
 //////////////////////////////////////////////////////////////////////////////////
+
+`timescale 1ns/1ps
 
 module fetch (
   input  logic        clk,
@@ -18,59 +21,73 @@ module fetch (
   output logic [31:0] pc_out,
   output logic [31:0] instr_out,
 
-  // icache interface
   output logic        icache_en_o,
   output logic [31:0] icache_addr_o,
   input  logic [31:0] icache_rdata_i,
   input  logic        icache_rvalid_i
 );
 
-  typedef enum logic [1:0] {S_IDLE, S_REQ, S_HAVE} state_t;
-  state_t state;
-
   logic [31:0] pc_q;
-  logic [31:0] instr_q;
 
-  always @(posedge clk) begin
-    if (!rst_n) begin
-      state   <= S_IDLE;
-      pc_q    <= 32'h0000_0000;
-      instr_q <= 32'h0000_0013;
-    end else begin
-      if (flush_i) begin
-        state <= S_IDLE;
-        pc_q  <= flush_pc_i;
-      end else begin
-        case (state)
-          S_IDLE: begin
-            state <= S_REQ;
-          end
+  logic        req_pending;
+  logic [31:0] req_pc;
 
-          S_REQ: begin
-            if (icache_rvalid_i) begin
-              instr_q <= icache_rdata_i;
-              state   <= S_HAVE;
-            end
-          end
+  logic        out_valid;
+  logic [31:0] out_pc;
+  logic [31:0] out_instr;
 
-          S_HAVE: begin
-            if (ready_in) begin
-              pc_q  <= pc_q + 32'd4;
-              state <= S_REQ;
-            end
-          end
+  assign valid_out = out_valid;
+  assign pc_out    = out_pc;
+  assign instr_out = out_instr;
 
-          default: state <= S_IDLE;
-        endcase
-      end
+  // icache request: pulse en when launching
+  always @* begin
+    icache_en_o   = 1'b0;
+    icache_addr_o = pc_q;
+
+    if (!out_valid && !req_pending) begin
+      icache_en_o   = 1'b1;
+      icache_addr_o = pc_q;
     end
   end
 
-  assign icache_en_o   = (state == S_REQ);
-  assign icache_addr_o = pc_q;
+  always_ff @(posedge clk) begin
+    if (!rst_n) begin
+      pc_q        <= 32'h0000_0000;
+      req_pending <= 1'b0;
+      req_pc      <= 32'h0;
 
-  assign valid_out = (state == S_HAVE);
-  assign pc_out    = pc_q;
-  assign instr_out = instr_q;
+      out_valid   <= 1'b0;
+      out_pc      <= 32'h0;
+      out_instr   <= 32'h0;
+    end else begin
+      if (flush_i) begin
+        pc_q        <= flush_pc_i;
+        req_pending <= 1'b0;
+        out_valid   <= 1'b0;
+      end else begin
+        // consume output
+        if (out_valid && ready_in) begin
+          out_valid <= 1'b0;
+        end
+
+        // launch request if empty
+        if (!out_valid && !req_pending) begin
+          req_pending <= 1'b1;
+          req_pc      <= pc_q;
+        end
+
+        // capture return
+        if (req_pending && icache_rvalid_i) begin
+          out_valid   <= 1'b1;
+          out_pc      <= req_pc;
+          out_instr   <= icache_rdata_i;
+
+          req_pending <= 1'b0;
+          pc_q        <= req_pc + 32'd4;
+        end
+      end
+    end
+  end
 
 endmodule

@@ -137,10 +137,6 @@ module lsu_fu (
     endcase
   end
 
-  // WB only when:
-  //   - response valid
-  //   - metadata valid (aligned)
-  //   - not in post-flush block
   always @* begin
     wb_o = '0;
 
