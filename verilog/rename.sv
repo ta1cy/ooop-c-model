@@ -177,6 +177,10 @@ module rename #(
 
     pkt_out.is_branch     = pkt_in.is_branch;
     pkt_out.is_jump       = pkt_in.is_jump;
+    pkt_out.is_jalr       = pkt_in.is_jalr;
+
+    pkt_out.rs1_used      = pkt_in.rs1_used;
+    pkt_out.rs2_used      = pkt_in.rs2_used;
 
     pkt_out.prs1          = rs1_phys;
     pkt_out.prs2          = rs2_phys;

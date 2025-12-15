@@ -72,6 +72,7 @@ module decode (
 
     pkt_out.is_branch = 1'b0;
     pkt_out.is_jump   = 1'b0;
+    pkt_out.is_jalr   = 1'b0;
 
     unique case (opcode)
 
@@ -180,6 +181,7 @@ module decode (
       7'b1100111: begin
         pkt_out.fu_type   = FU_BRU;
         pkt_out.is_jump   = 1'b1;
+        pkt_out.is_jalr   = 1'b1;
         pkt_out.rs1_used  = 1'b1;
         pkt_out.rd_used   = (rd != 5'd0); // jalr x0,... means no link
         pkt_out.imm       = imm_i;

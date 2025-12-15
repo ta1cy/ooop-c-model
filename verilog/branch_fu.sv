@@ -56,7 +56,7 @@ module branch_fu (
       // jumps always taken
       if (entry_i.is_jump || (opcode == 7'b1101111) || (opcode == 7'b1100111)) begin
         actual_taken = 1'b1;
-        if (opcode == 7'b1100111) begin
+        if (entry_i.is_jalr) begin
           // JALR target = (rs1 + imm) & ~1
           target_pc = (src1_i + entry_i.imm) & 32'hFFFF_FFFE;
         end else begin

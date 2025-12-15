@@ -92,6 +92,7 @@ package ooop_types;
 
     logic         is_branch;
     logic         is_jump;
+    logic         is_jalr;
   } decode_pkt_t;
 
   typedef struct packed {
@@ -118,6 +119,10 @@ package ooop_types;
 
     logic         is_branch;
     logic         is_jump;
+    logic         is_jalr;
+
+    logic         rs1_used;
+    logic         rs2_used;
 
     logic [PREG_W-1:0] prs1;
     logic [PREG_W-1:0] prs2;
@@ -151,6 +156,10 @@ package ooop_types;
 
     logic         is_branch;
     logic         is_jump;
+    logic         is_jalr;
+
+    logic         rs1_used;
+    logic         rs2_used;
 
     logic [PREG_W-1:0] prs1;
     logic [PREG_W-1:0] prs2;

@@ -116,6 +116,10 @@ module dispatch (
 
     entry.is_branch     = f_out_pkt.is_branch;
     entry.is_jump       = f_out_pkt.is_jump;
+    entry.is_jalr       = f_out_pkt.is_jalr;
+
+    entry.rs1_used      = f_out_pkt.rs1_used;
+    entry.rs2_used      = f_out_pkt.rs2_used;
 
     entry.prs1          = f_out_pkt.prs1;
     entry.prs2          = f_out_pkt.prs2;
