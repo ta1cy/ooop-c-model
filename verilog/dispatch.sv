@@ -86,7 +86,8 @@ module dispatch (
   end
 
   // dispatch fires only when fifo valid, ROB ready, and target RS has space
-  wire fire = f_out_valid && rob_ready_i && rs_space_ok;
+  // BUG 6 FIX: Do NOT dispatch during flush (which happens during recovery)
+  wire fire = f_out_valid && rob_ready_i && rs_space_ok && !flush_i;
   assign f_out_ready = fire;
 
   // ---------------------------------------------------------------------------

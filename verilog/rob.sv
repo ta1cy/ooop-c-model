@@ -76,14 +76,14 @@ module rob #(
     wb_hits = wb.valid && (wb.rob_tag == tag);
   endfunction
 
-  // commit is "head valid && done && count!=0" (but suppressed during flush only)
-  // Allow commit during recover to retire the mispredicted instruction
+  // commit is "head valid && done && count!=0"
+  // CRITICAL: During recovery (flush_i=1, recover_i=1), the mispredicted branch/jump
+  // at ROB head MUST commit before recovery squashes younger instructions.
+  // So we allow commit even during flush/recover.
   always @* begin
     commit_fire = 1'b0;
-    if (!flush_i) begin
-      if ((count != 0) && entries[head].valid && entries[head].done) begin
-        commit_fire = 1'b1;
-      end
+    if ((count != 0) && entries[head].valid && entries[head].done) begin
+      commit_fire = 1'b1;
     end
   end
 
@@ -132,34 +132,7 @@ module rob #(
       $display("[rob] reset");
 `endif
 
-    end else if (recover_i) begin
-      logic [ROB_W-1:0] ckpt_head, ckpt_tail;
-      logic [ROB_W-1:0] idx;
-
-      ckpt_head = ckpt_ptrs[recover_tag_i].head;
-      ckpt_tail = ckpt_ptrs[recover_tag_i].tail;
-      idx       = ckpt_tail;
-
-      // invalidate younger-than-checkpoint entries: [ckpt_tail .. tail)
-      for (j = 0; j < DEPTH; j++) begin
-        if (idx == tail) begin
-          j = DEPTH;
-        end else begin
-          entries[idx] <= '0;
-          idx = idx + 1'b1;
-        end
-      end
-
-      head         <= ckpt_head;
-      tail         <= ckpt_tail;
-      count        <= ckpt_ptrs[recover_tag_i].count;
-      ckpt_pending <= '0;
-
-`ifdef ROB_DEBUG
-      $display("[rob] recover tag=%0d -> head=%0d tail=%0d count=%0d (flush younger)", recover_tag_i, ckpt_head, ckpt_tail, ckpt_ptrs[recover_tag_i].count);
-`endif
-
-    end else if (flush_i) begin
+    end else if (flush_i && !recover_i) begin
       head <= '0;
       tail <= '0;
       count <= '0;
@@ -174,6 +147,33 @@ module rob #(
 `endif
 
     end else begin
+      // Handle recovery: invalidate younger entries, restore tail
+      // But allow commit to happen normally (head updates from commit logic below)
+      if (recover_i) begin
+        logic [ROB_W-1:0] ckpt_tail;
+        logic [ROB_W-1:0] idx;
+
+        ckpt_tail = ckpt_ptrs[recover_tag_i].tail;
+        idx       = ckpt_tail;
+
+        // invalidate younger-than-checkpoint entries: [ckpt_tail .. tail)
+        for (j = 0; j < DEPTH; j++) begin
+          if (idx == tail) begin
+            j = DEPTH;
+          end else begin
+            entries[idx] <= '0;
+            idx = idx + 1'b1;
+          end
+        end
+
+        tail         <= ckpt_tail;
+        ckpt_pending <= '0;
+
+`ifdef ROB_DEBUG
+        $display("[rob] recover tag=%0d -> tail=%0d (flush younger, allow commit)", recover_tag_i, ckpt_tail);
+`endif
+      end
+
       // record checkpoint intent (tag is "next allocated instruction's rob_tag")
       if (checkpoint_take_i) begin
         ckpt_pending[checkpoint_tag_i] <= 1'b1;
@@ -239,12 +239,21 @@ module rob #(
         tail <= tail + 1'b1;
       end
 
-      // count update: based on SAME-CYCLE commit_fire/alloc_fire
-      unique case ({alloc_fire, commit_fire})
-        2'b10: count <= count + 1'b1; // alloc only
-        2'b01: count <= count - 1'b1; // commit only
-        default: count <= count;      // both or neither
-      endcase
+      // count update: based on SAME-CYCLE commit_fire/alloc_fire and recover_i
+      if (recover_i) begin
+        // During recovery, count is determined by checkpoint count and commit
+        if (commit_fire) begin
+          count <= ckpt_ptrs[recover_tag_i].count - 1'b1;
+        end else begin
+          count <= ckpt_ptrs[recover_tag_i].count;
+        end
+      end else begin
+        unique case ({alloc_fire, commit_fire})
+          2'b10: count <= count + 1'b1; // alloc only
+          2'b01: count <= count - 1'b1; // commit only
+          default: count <= count;      // both or neither
+        endcase
+      end
     end
   end
 
