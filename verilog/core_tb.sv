@@ -181,6 +181,21 @@ end
         dut.checkpoint_take, dut.checkpoint_tag
       );
       $fwrite(log_fd, "  RENAME_PKT: %p\n", dut.r_pkt);
+      
+      // --------- MAP table state (on rename operations or recovery) ----------
+      if (dut.r_valid && dut.r_ready && dut.r_pkt.rd_used) begin
+        $fwrite(log_fd, "  MAP_TABLE: x1->P%0d x5->P%0d x6->P%0d x7->P%0d x8->P%0d x10->P%0d x11->P%0d x29->P%0d x30->P%0d\n",
+          dut.rename_u.mt0.rat[1],
+          dut.rename_u.mt0.rat[5],
+          dut.rename_u.mt0.rat[6],
+          dut.rename_u.mt0.rat[7],
+          dut.rename_u.mt0.rat[8],
+          dut.rename_u.mt0.rat[10],
+          dut.rename_u.mt0.rat[11],
+          dut.rename_u.mt0.rat[29],
+          dut.rename_u.mt0.rat[30]
+        );
+      end
 
       // --------- dispatch + fifo ----------
       $fwrite(log_fd,
@@ -195,9 +210,7 @@ end
 
       // --------- RS inserts ----------
       $fwrite(log_fd,
-        "  RS_INS: alu_v=%0b tag=%0d prs1=%0d(%0b) prs2=%0d(%0b) prd=%0d rd_used=%0b | ",
-        "bru_v=%0b tag=%0d prs1=%0d(%0b) prs2=%0d(%0b) prd=%0d rd_used=%0b | ",
-        "lsu_v=%0b tag=%0d prs1=%0d(%0b) prs2=%0d(%0b) prd=%0d rd_used=%0b\n",
+        "  RS_INS: alu_v=%0b tag=%0d prs1=%0d(%0b) prs2=%0d(%0b) prd=%0d rd_used=%0b | bru_v=%0b tag=%0d prs1=%0d(%0b) prs2=%0d(%0b) prd=%0d rd_used=%0b | lsu_v=%0b tag=%0d prs1=%0d(%0b) prs2=%0d(%0b) prd=%0d rd_used=%0b\n",
         dut.rs_alu_ins_v, dut.rs_alu_ins_e.rob_tag, dut.rs_alu_ins_e.prs1, dut.rs_alu_ins_e.prs1_ready, dut.rs_alu_ins_e.prs2, dut.rs_alu_ins_e.prs2_ready, dut.rs_alu_ins_e.prd, dut.rs_alu_ins_e.rd_used,
         dut.rs_bru_ins_v, dut.rs_bru_ins_e.rob_tag, dut.rs_bru_ins_e.prs1, dut.rs_bru_ins_e.prs1_ready, dut.rs_bru_ins_e.prs2, dut.rs_bru_ins_e.prs2_ready, dut.rs_bru_ins_e.prd, dut.rs_bru_ins_e.rd_used,
         dut.rs_lsu_ins_v, dut.rs_lsu_ins_e.rob_tag, dut.rs_lsu_ins_e.prs1, dut.rs_lsu_ins_e.prs1_ready, dut.rs_lsu_ins_e.prs2, dut.rs_lsu_ins_e.prs2_ready, dut.rs_lsu_ins_e.prd, dut.rs_lsu_ins_e.rd_used
@@ -221,6 +234,38 @@ end
         dut.prf_valid[0],
         dut.prf_valid[32]
       );
+      
+      // --------- PRF valid bits for recently written registers ----------
+      if (dut.wb_alu.valid) begin
+        if (dut.wb_alu.rd_used) begin
+          $fwrite(log_fd, "  PRF_VALID_UPDATES: ALU(P%0d->%0b)\n", dut.wb_alu.prd, dut.prf_valid[dut.wb_alu.prd]);
+        end
+      end
+      if (dut.wb_bru.valid) begin
+        if (dut.wb_bru.rd_used) begin
+          $fwrite(log_fd, "  PRF_VALID_UPDATES: BRU(P%0d->%0b)\n", dut.wb_bru.prd, dut.prf_valid[dut.wb_bru.prd]);
+        end
+      end
+      if (dut.wb_lsu.valid) begin
+        if (dut.wb_lsu.rd_used) begin
+          $fwrite(log_fd, "  PRF_VALID_UPDATES: LSU(P%0d->%0b)\n", dut.wb_lsu.prd, dut.prf_valid[dut.wb_lsu.prd]);
+        end
+      end
+      if (dut.alloc_inval) begin
+        $fwrite(log_fd, "  PRF_VALID_UPDATES: ALLOC(P%0d->0)\n", dut.alloc_preg);
+      end
+      
+      // --------- PRF valid bits during recovery (checking for invalid ready bits) ----------
+      if (dut.recover_i) begin
+        $fwrite(log_fd, "  PRF_VALID_SUMMARY: ");
+        for (int p = 32; p < 64; p++) begin
+          if (!dut.prf_valid[p]) begin
+            $fwrite(log_fd, "P%0d=0 ", p);
+          end
+        end
+        $fwrite(log_fd, "\n");
+      end
+      
       if ((cycle_count >= 5) && (cycle_count <= 7)) begin
         $fwrite(log_fd,
           "  *** P32 PROBE (C5-7): prf_valid[32]=%0b | wb_alu.valid=%0b wb_alu.prd=%0d wb_alu.rob_tag=%0d | r_alloc_inval=%0b alloc_preg=%0d\n",
@@ -262,6 +307,70 @@ end
         );
       end
 
+      // --------- RECOVERY STATE DUMP (if recovering) ----------
+      if (dut.recover_i) begin
+        $fwrite(log_fd,
+          "  *** RECOVERY TAG=%0d *** ROB_CKPT: head=%0d tail=%0d count=%0d | ckpt_pending=0x%0h\n",
+          dut.recover_tag_i,
+          dut.rob_u.ckpt_ptrs[dut.recover_tag_i].head,
+          dut.rob_u.ckpt_ptrs[dut.recover_tag_i].tail,
+          dut.rob_u.ckpt_ptrs[dut.recover_tag_i].count,
+          dut.rob_u.ckpt_pending
+        );
+        
+        // RAT checkpoint restoration
+        $fwrite(log_fd, "  RAT_CKPT_RESTORE[%0d]: ", dut.recover_tag_i);
+        for (int r = 0; r < 8; r++) begin
+          $fwrite(log_fd, "x%0d->P%0d ", r, dut.rename_u.mt0.ckpt_rat[dut.recover_tag_i][r]);
+        end
+        $fwrite(log_fd, "... x28->P%0d x29->P%0d x30->P%0d x31->P%0d\n",
+          dut.rename_u.mt0.ckpt_rat[dut.recover_tag_i][28],
+          dut.rename_u.mt0.ckpt_rat[dut.recover_tag_i][29],
+          dut.rename_u.mt0.ckpt_rat[dut.recover_tag_i][30],
+          dut.rename_u.mt0.ckpt_rat[dut.recover_tag_i][31]
+        );
+        
+        // Current RAT state before recovery
+        $fwrite(log_fd, "  RAT_CURRENT (pre-recover): ");
+        for (int r = 0; r < 8; r++) begin
+          $fwrite(log_fd, "x%0d->P%0d ", r, dut.rename_u.mt0.rat[r]);
+        end
+        $fwrite(log_fd, "... x28->P%0d x29->P%0d x30->P%0d x31->P%0d\n",
+          dut.rename_u.mt0.rat[28],
+          dut.rename_u.mt0.rat[29],
+          dut.rename_u.mt0.rat[30],
+          dut.rename_u.mt0.rat[31]
+        );
+        
+        // Free list checkpoint state (bitmap)
+        $fwrite(log_fd, "  FREE_LIST_CKPT[%0d]: bitmap=0x%0h has_free=%0b\n",
+          dut.recover_tag_i,
+          dut.rename_u.fl0.ckpt_free_map[dut.recover_tag_i],
+          dut.rename_u.fl0.has_free_o
+        );
+        
+        $fwrite(log_fd, "  FREE_LIST_CURRENT (pre-recover): bitmap=0x%0h has_free=%0b\n",
+          dut.rename_u.fl0.free_map,
+          dut.rename_u.fl0.has_free_o
+        );
+      end
+
+      // --------- ROB all entries (when count > 0 and near deadlock) ----------
+      if (dut.rob_u.count > 12) begin
+        $fwrite(log_fd, "  ROB_ENTRIES:");
+        for (int idx = 0; idx < 16; idx++) begin
+          if (dut.rob_u.entries[idx].valid) begin
+            $fwrite(log_fd, " [%0d:v=%0b,d=%0b,t=%0d]",
+              idx,
+              dut.rob_u.entries[idx].valid,
+              dut.rob_u.entries[idx].done,
+              dut.rob_u.entries[idx].tag
+            );
+          end
+        end
+        $fwrite(log_fd, "\n");
+      end
+
       // --------- RS internal hold state (useful for deadlock) ----------
       $fwrite(log_fd,
         "  RS_HOLD: alu(hold=%0b idx=%0d) bru(hold=%0b idx=%0d) lsu(hold=%0b idx=%0d)\n",
@@ -269,6 +378,87 @@ end
         dut.rs_bru_u.hold_valid_q, dut.rs_bru_u.hold_idx_q,
         dut.rs_lsu_u.hold_valid_q, dut.rs_lsu_u.hold_idx_q
       );
+
+      // --------- RS detailed entries (when near full or recovering) ----------
+      if (dut.rob_u.count > 12) begin
+        $fwrite(log_fd, "  RS_ALU_ENTRIES:");
+        for (int idx = 0; idx < 8; idx++) begin
+          if (dut.rs_alu_u.entries[idx].valid) begin
+            $fwrite(log_fd, " [%0d:t=%0d,r=%0b,p1r=%0b,p2r=%0b]",
+              idx,
+              dut.rs_alu_u.entries[idx].rob_tag,
+              dut.rs_alu_u.ready_mask[idx],
+              dut.rs_alu_u.entries[idx].prs1_ready,
+              dut.rs_alu_u.entries[idx].prs2_ready
+            );
+          end
+        end
+        $fwrite(log_fd, "\n");
+
+        $fwrite(log_fd, "  RS_BRU_ENTRIES:");
+        for (int idx = 0; idx < 8; idx++) begin
+          if (dut.rs_bru_u.entries[idx].valid) begin
+            $fwrite(log_fd, " [%0d:t=%0d,r=%0b,p1r=%0b,p2r=%0b,isj=%0b]",
+              idx,
+              dut.rs_bru_u.entries[idx].rob_tag,
+              dut.rs_bru_u.ready_mask[idx],
+              dut.rs_bru_u.entries[idx].prs1_ready,
+              dut.rs_bru_u.entries[idx].prs2_ready,
+              dut.rs_bru_u.entries[idx].is_jalr
+            );
+          end
+        end
+        $fwrite(log_fd, "\n");
+
+        $fwrite(log_fd, "  RS_LSU_ENTRIES:");
+        for (int idx = 0; idx < 8; idx++) begin
+          if (dut.rs_lsu_u.entries[idx].valid) begin
+            $fwrite(log_fd, " [%0d:t=%0d,r=%0b,ld=%0b,st=%0b]",
+              idx,
+              dut.rs_lsu_u.entries[idx].rob_tag,
+              dut.rs_lsu_u.ready_mask[idx],
+              dut.rs_lsu_u.entries[idx].is_load,
+              dut.rs_lsu_u.entries[idx].is_store
+            );
+          end
+        end
+        $fwrite(log_fd, "\n");
+      end
+      
+      // --------- Branch FU debug (when branch/jump executing) ----------
+      if (dut.bru_issue_v) begin
+        $fwrite(log_fd,
+          "  BRU_EXEC: pc=0x%08h isj=%0b isjr=%0b isbr=%0b src1=0x%08h src2=0x%08h imm=0x%08h\n",
+          dut.bru_issue_e.pc,
+          dut.bru_issue_e.is_jump,
+          dut.bru_issue_e.is_jalr,
+          dut.bru_issue_e.is_branch,
+          dut.prf_rdata1,
+          dut.prf_rdata2,
+          dut.bru_issue_e.imm
+        );
+        $fwrite(log_fd,
+          "  BRU_RESULT: calc_tgt=0x%08h mp=%0b mp_tgt=0x%08h mp_tag=%0d\n",
+          dut.branch_fu_u.target_pc,
+          dut.bru_mispredict,
+          dut.bru_target_pc,
+          dut.bru_recover_tag
+        );
+      end
+      
+      // --------- Pipeline stage valid/ready during flush ----------
+      if (dut.flush_i) begin
+        $fwrite(log_fd,
+          "  PIPE_FLUSH: fetch_v=%0b dec_v=%0b ren_v=%0b disp_v=%0b f2d_v=%0b d2r_v=%0b r2d_v=%0b\n",
+          dut.fetch_u.out_valid,
+          dut.d_valid_raw,
+          dut.r_valid_raw,
+          dut.r_valid,
+          dut.f2d_valid,
+          dut.d_valid,
+          dut.r_valid
+        );
+      end
 
       // optional: massive dump of arch regs
       if (DUMP_ARCH_EVERY_CYCLE) begin
