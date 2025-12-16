@@ -41,7 +41,7 @@ module branch_fu (
 
   always @* begin
     opcode = entry_i.instr[6:0];
-    funct3 = entry_i.instr[14:12];
+    funct3 = entry_i.funct3;  // use reliable funct3 from pipeline instead of decoding from instr
   end
 
   // actual taken?

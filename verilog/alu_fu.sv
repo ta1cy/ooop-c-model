@@ -40,7 +40,7 @@ module alu_fu (
 
   always @* begin
     opcode = e_q.instr[6:0];
-    funct3 = e_q.instr[14:12];
+    funct3 = e_q.funct3;  // use reliable funct3 from pipeline instead of decoding from instr
     funct7 = e_q.instr[31:25];
   end
 

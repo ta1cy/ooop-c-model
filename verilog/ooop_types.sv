@@ -93,6 +93,7 @@ package ooop_types;
     logic         is_branch;
     logic         is_jump;
     logic         is_jalr;
+    logic [2:0]   funct3;    // for branch condition and load/store size
   } decode_pkt_t;
 
   typedef struct packed {
@@ -120,6 +121,7 @@ package ooop_types;
     logic         is_branch;
     logic         is_jump;
     logic         is_jalr;
+    logic [2:0]   funct3;    // for branch condition and load/store size
 
     logic         rs1_used;
     logic         rs2_used;
@@ -156,8 +158,7 @@ package ooop_types;
 
     logic         is_branch;
     logic         is_jump;
-    logic         is_jalr;
-
+    logic         is_jalr;    logic [2:0]   funct3;    // for branch condition and load/store size
     logic         rs1_used;
     logic         rs2_used;
 

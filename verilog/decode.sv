@@ -73,6 +73,7 @@ module decode (
     pkt_out.is_branch = 1'b0;
     pkt_out.is_jump   = 1'b0;
     pkt_out.is_jalr   = 1'b0;
+    pkt_out.funct3    = funct3;  // pass funct3 for branch/load/store decoding
 
     unique case (opcode)
 
