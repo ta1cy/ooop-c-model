@@ -63,17 +63,28 @@ module prf (
   endfunction
 
   logic [N_PHYS_REGS-1:0] valid_next;
+  integer p;
 
   always @* begin
     valid_next = valid_bits;
 
+    // Invalidate allocated register
     if (alloc_inval_i && (alloc_preg_i != '0)) begin
       valid_next[alloc_preg_i] = 1'b0;
     end
 
-    valid_next = apply_wb_valid(valid_next, wb_alu_i);
-    valid_next = apply_wb_valid(valid_next, wb_lsu_i);
-    valid_next = apply_wb_valid(valid_next, wb_bru_i);
+    // Set valid for writebacks
+    for (p = 0; p < N_PHYS_REGS; p = p + 1) begin
+      if (wb_alu_i.valid && wb_alu_i.rd_used && (wb_alu_i.prd == p) && (p != 0)) begin
+        valid_next[p] = 1'b1;
+      end
+      if (wb_lsu_i.valid && wb_lsu_i.rd_used && (wb_lsu_i.prd == p) && (p != 0)) begin
+        valid_next[p] = 1'b1;
+      end
+      if (wb_bru_i.valid && wb_bru_i.rd_used && (wb_bru_i.prd == p) && (p != 0)) begin
+        valid_next[p] = 1'b1;
+      end
+    end
 
     valid_next[0] = 1'b1;
   end
